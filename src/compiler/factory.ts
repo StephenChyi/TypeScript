@@ -845,7 +845,7 @@ namespace ts {
         const node = <ImportTypeNode>createSynthesizedNode(SyntaxKind.ImportType);
         node.argument = argument;
         node.qualifier = qualifier;
-        node.typeArguments = asNodeArray(typeArguments);
+        node.typeArguments = parenthesizeTypeParameters(typeArguments);
         node.isTypeOf = isTypeOf;
         return node;
     }
@@ -1004,10 +1004,10 @@ namespace ts {
             : node;
     }
 
-    export function createPropertyAccess(expression: Expression, name: string | Identifier | undefined) {
+    export function createPropertyAccess(expression: Expression, name: string | Identifier) {
         const node = <PropertyAccessExpression>createSynthesizedNode(SyntaxKind.PropertyAccessExpression);
         node.expression = parenthesizeForAccess(expression);
-        node.name = asName(name)!; // TODO: GH#18217
+        node.name = asName(name);
         setEmitFlags(node, EmitFlags.NoIndentation);
         return node;
     }
@@ -2189,7 +2189,7 @@ namespace ts {
     }
 
     /* @internal */
-    export function createJSDocTypeTag(typeExpression?: JSDocTypeExpression, comment?: string): JSDocTypeTag {
+    export function createJSDocTypeTag(typeExpression: JSDocTypeExpression, comment?: string): JSDocTypeTag {
         const tag = createJSDocTag<JSDocTypeTag>(SyntaxKind.JSDocTypeTag, "type");
         tag.typeExpression = typeExpression;
         tag.comment = comment;
@@ -2201,6 +2201,13 @@ namespace ts {
         const tag = createJSDocTag<JSDocReturnTag>(SyntaxKind.JSDocReturnTag, "returns");
         tag.typeExpression = typeExpression;
         tag.comment = comment;
+        return tag;
+    }
+
+    /** @internal */
+    export function createJSDocThisTag(typeExpression?: JSDocTypeExpression): JSDocThisTag {
+        const tag = createJSDocTag<JSDocThisTag>(SyntaxKind.JSDocThisTag, "this");
+        tag.typeExpression = typeExpression;
         return tag;
     }
 
@@ -2468,7 +2475,7 @@ namespace ts {
 
     export function createSpreadAssignment(expression: Expression) {
         const node = <SpreadAssignment>createSynthesizedNode(SyntaxKind.SpreadAssignment);
-        node.expression = expression !== undefined ? parenthesizeExpressionForList(expression) : undefined!; // TODO: GH#18217
+        node.expression = parenthesizeExpressionForList(expression);
         return node;
     }
 
@@ -2657,6 +2664,7 @@ namespace ts {
             valuesHelper,
             readHelper,
             spreadHelper,
+            spreadArraysHelper,
             restHelper,
             decorateHelper,
             metadataHelper,
@@ -2949,7 +2957,7 @@ namespace ts {
         return node;
     }
 
-    export function updateBundle(node: Bundle, sourceFiles: ReadonlyArray<SourceFile>, prepends: ReadonlyArray<UnparsedSource> = emptyArray) {
+    export function updateBundle(node: Bundle, sourceFiles: ReadonlyArray<SourceFile>, prepends: ReadonlyArray<UnparsedSource | InputFiles> = emptyArray) {
         if (node.sourceFiles !== sourceFiles || node.prepends !== prepends) {
             return createBundle(sourceFiles, prepends);
         }
@@ -3116,6 +3124,18 @@ namespace ts {
         }
 
         return node.emitNode;
+    }
+
+    /**
+     * Sets `EmitFlags.NoComments` on a node and removes any leading and trailing synthetic comments.
+     * @internal
+     */
+    export function removeAllComments<T extends Node>(node: T): T {
+        const emitNode = getOrCreateEmitNode(node);
+        emitNode.flags |= EmitFlags.NoComments;
+        emitNode.leadingComments = undefined;
+        emitNode.trailingComments = undefined;
+        return node;
     }
 
     export function setTextRange<T extends TextRange>(range: T, location: TextRange | undefined): T {
@@ -3686,6 +3706,31 @@ namespace ts {
         return setTextRange(
             createCall(
                 getHelperName("__spread"),
+                /*typeArguments*/ undefined,
+                argumentList
+            ),
+            location
+        );
+    }
+
+    export const spreadArraysHelper: UnscopedEmitHelper = {
+        name: "typescript:spreadArrays",
+        scoped: false,
+        text: `
+            var __spreadArrays = (this && this.__spreadArrays) || function () {
+                for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
+                for (var r = Array(s), k = 0, i = 0; i < il; i++)
+                    for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
+                        r[k] = a[j];
+                return r;
+            };`
+    };
+
+    export function createSpreadArraysHelper(context: TransformationContext, argumentList: ReadonlyArray<Expression>, location?: TextRange) {
+        context.requestEmitHelper(spreadArraysHelper);
+        return setTextRange(
+            createCall(
+                getHelperName("__spreadArrays"),
                 /*typeArguments*/ undefined,
                 argumentList
             ),

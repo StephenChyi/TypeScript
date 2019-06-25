@@ -198,13 +198,13 @@ namespace ts.server {
             return hasOneOrMoreJsAndNoTsFiles(this);
         }
 
-        public static resolveModule(moduleName: string, initialDir: string, host: ServerHost, log: (message: string) => void): {} | undefined {
+        public static resolveModule(moduleName: string, initialDir: string, host: ServerHost, log: (message: string) => void, logErrors?: (message: string) => void): {} | undefined {
             const resolvedPath = normalizeSlashes(host.resolvePath(combinePaths(initialDir, "node_modules")));
             log(`Loading ${moduleName} from ${initialDir} (resolved to ${resolvedPath})`);
             const result = host.require!(resolvedPath, moduleName); // TODO: GH#18217
             if (result.error) {
                 const err = result.error.stack || result.error.message || JSON.stringify(result.error);
-                log(`Failed to load module '${moduleName}': ${err}`);
+                (logErrors || log)(`Failed to load module '${moduleName}' from ${resolvedPath}: ${err}`);
                 return undefined;
             }
             return result.module;
@@ -276,10 +276,6 @@ namespace ts.server {
         }
         installPackage(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult> {
             return this.typingsCache.installPackage({ ...options, projectName: this.projectName, projectRootPath: this.toPath(this.currentDirectory) });
-        }
-        /* @internal */
-        inspectValue(options: InspectValueOptions): Promise<ValueInfo> {
-            return this.typingsCache.inspectValue(options);
         }
 
         private get typingsCache(): TypingsCache {
@@ -459,6 +455,14 @@ namespace ts.server {
         /*@internal*/
         getGlobalCache() {
             return this.getTypeAcquisition().enable ? this.projectService.typingsInstaller.globalTypingsCacheLocation : undefined;
+        }
+
+        /*@internal*/
+        globalCacheResolutionModuleName = JsTyping.nonRelativeModuleNameForTypingCache;
+
+        /*@internal*/
+        fileIsOpen(filePath: Path) {
+            return this.projectService.openFiles.has(filePath);
         }
 
         /*@internal*/
@@ -948,7 +952,7 @@ namespace ts.server {
             this.externalFiles = this.getExternalFiles();
             enumerateInsertsAndDeletes<string, string>(this.externalFiles, oldExternalFiles, getStringComparer(!this.useCaseSensitiveFileNames()),
                 // Ensure a ScriptInfo is created for new external files. This is performed indirectly
-                // by the LSHost for files in the program when the program is retrieved above but
+                // by the host for files in the program when the program is retrieved above but
                 // the program doesn't contain external files so this must be done explicitly.
                 inserted => {
                     const scriptInfo = this.projectService.getOrCreateScriptInfoNotOpenedByClient(inserted, this.currentDirectory, this.directoryStructureHost)!;
@@ -1146,12 +1150,11 @@ namespace ts.server {
         protected enablePlugin(pluginConfigEntry: PluginImport, searchPaths: string[], pluginConfigOverrides: Map<any> | undefined) {
             this.projectService.logger.info(`Enabling plugin ${pluginConfigEntry.name} from candidate paths: ${searchPaths.join(",")}`);
 
-            const log = (message: string) => {
-                this.projectService.logger.info(message);
-            };
-
+            const log = (message: string) => this.projectService.logger.info(message);
+            let errorLogs: string[] | undefined;
+            const logError = (message: string) => { (errorLogs || (errorLogs = [])).push(message); };
             const resolvedModule = firstDefined(searchPaths, searchPath =>
-                <PluginModuleFactory | undefined>Project.resolveModule(pluginConfigEntry.name, searchPath, this.projectService.host, log));
+                <PluginModuleFactory | undefined>Project.resolveModule(pluginConfigEntry.name, searchPath, this.projectService.host, log, logError));
             if (resolvedModule) {
                 const configurationOverride = pluginConfigOverrides && pluginConfigOverrides.get(pluginConfigEntry.name);
                 if (configurationOverride) {
@@ -1164,6 +1167,7 @@ namespace ts.server {
                 this.enableProxy(resolvedModule, pluginConfigEntry);
             }
             else {
+                forEach(errorLogs, log);
                 this.projectService.logger.info(`Couldn't find ${pluginConfigEntry.name}`);
             }
         }

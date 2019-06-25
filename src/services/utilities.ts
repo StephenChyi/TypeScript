@@ -1190,8 +1190,8 @@ namespace ts {
         return !!range && shouldBeReference === tripleSlashDirectivePrefixRegex.test(sourceFile.text.substring(range.pos, range.end));
     }
 
-    export function createTextSpanFromNode(node: Node, sourceFile?: SourceFile): TextSpan {
-        return createTextSpanFromBounds(node.getStart(sourceFile), node.getEnd());
+    export function createTextSpanFromNode(node: Node, sourceFile?: SourceFile, endNode?: Node): TextSpan {
+        return createTextSpanFromBounds(node.getStart(sourceFile), (endNode || node).getEnd());
     }
 
     export function createTextRangeFromNode(node: Node, sourceFile: SourceFile): TextRange {
@@ -1717,7 +1717,19 @@ namespace ts {
 
     export function getSynthesizedDeepCloneWithRenames<T extends Node>(node: T, includeTrivia = true, renameMap?: Map<Identifier>, checker?: TypeChecker, callback?: (originalNode: Node, clone: Node) => any): T {
         let clone;
-        if (isIdentifier(node) && renameMap && checker) {
+        if (renameMap && checker && isBindingElement(node) && isIdentifier(node.name) && isObjectBindingPattern(node.parent)) {
+            const symbol = checker.getSymbolAtLocation(node.name);
+            const renameInfo = symbol && renameMap.get(String(getSymbolId(symbol)));
+
+            if (renameInfo && renameInfo.text !== (node.name || node.propertyName).getText()) {
+                clone = createBindingElement(
+                    node.dotDotDotToken,
+                    node.propertyName || node.name,
+                    renameInfo,
+                    node.initializer);
+            }
+        }
+        else if (renameMap && checker && isIdentifier(node)) {
             const symbol = checker.getSymbolAtLocation(node);
             const renameInfo = symbol && renameMap.get(String(getSymbolId(symbol)));
 

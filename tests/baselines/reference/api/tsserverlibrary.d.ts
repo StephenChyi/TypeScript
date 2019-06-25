@@ -14,7 +14,7 @@ and limitations under the License.
 ***************************************************************************** */
 
 declare namespace ts {
-    const versionMajorMinor = "3.5";
+    const versionMajorMinor = "3.6";
     /** The version of the TypeScript compiler release */
     const version: string;
 }
@@ -628,7 +628,7 @@ declare namespace ts {
         initializer?: Expression;
     }
     interface ObjectLiteralElement extends NamedDeclaration {
-        _objectLiteralBrandBrand: any;
+        _objectLiteralBrand: any;
         name?: PropertyName;
     }
     /** Unlike ObjectLiteralElement, excludes JSXAttribute and JSXSpreadAttribute. */
@@ -1603,7 +1603,7 @@ declare namespace ts {
     }
     interface JSDocTypeTag extends JSDocTag {
         kind: SyntaxKind.JSDocTypeTag;
-        typeExpression?: JSDocTypeExpression;
+        typeExpression: JSDocTypeExpression;
     }
     interface JSDocTypedefTag extends JSDocTag, NamedDeclaration {
         parent: JSDoc;
@@ -1879,13 +1879,18 @@ declare namespace ts {
         sourceFile: SourceFile;
         references?: ReadonlyArray<ResolvedProjectReference | undefined>;
     }
+    type CustomTransformerFactory = (context: TransformationContext) => CustomTransformer;
+    interface CustomTransformer {
+        transformSourceFile(node: SourceFile): SourceFile;
+        transformBundle(node: Bundle): Bundle;
+    }
     interface CustomTransformers {
         /** Custom transformers to evaluate before built-in .js transformations. */
-        before?: TransformerFactory<SourceFile>[];
+        before?: (TransformerFactory<SourceFile> | CustomTransformerFactory)[];
         /** Custom transformers to evaluate after built-in .js transformations. */
-        after?: TransformerFactory<SourceFile>[];
+        after?: (TransformerFactory<SourceFile> | CustomTransformerFactory)[];
         /** Custom transformers to evaluate after built-in .d.ts transformations. */
-        afterDeclarations?: TransformerFactory<Bundle | SourceFile>[];
+        afterDeclarations?: (TransformerFactory<Bundle | SourceFile> | CustomTransformerFactory)[];
     }
     interface SourceMapSpan {
         /** Line number in the .js file. */
@@ -1905,7 +1910,8 @@ declare namespace ts {
     enum ExitStatus {
         Success = 0,
         DiagnosticsPresent_OutputsSkipped = 1,
-        DiagnosticsPresent_OutputsGenerated = 2
+        DiagnosticsPresent_OutputsGenerated = 2,
+        InvalidProject_OutputsSkipped = 3
     }
     interface EmitResult {
         emitSkipped: boolean;
@@ -1964,6 +1970,7 @@ declare namespace ts {
          */
         getExportSymbolOfSymbol(symbol: Symbol): Symbol;
         getPropertySymbolOfDestructuringAssignment(location: Identifier): Symbol | undefined;
+        getTypeOfAssignmentPattern(pattern: AssignmentPattern): Type;
         getTypeAtLocation(node: Node): Type;
         getTypeFromTypeNode(node: TypeNode): Type;
         signatureToString(signature: Signature, enclosingDeclaration?: Node, flags?: TypeFormatFlags, kind?: SignatureKind): string;
@@ -2296,6 +2303,7 @@ declare namespace ts {
         MarkerType = 8192,
         JSLiteral = 16384,
         FreshLiteral = 32768,
+        ArrayLiteral = 65536,
         ClassOrInterface = 3,
     }
     interface ObjectType extends Type {
@@ -2385,8 +2393,8 @@ declare namespace ts {
         root: ConditionalRoot;
         checkType: Type;
         extendsType: Type;
-        trueType: Type;
-        falseType: Type;
+        resolvedTrueType: Type;
+        resolvedFalseType: Type;
     }
     interface SubstitutionType extends InstantiableType {
         typeVariable: TypeVariable;
@@ -2413,12 +2421,13 @@ declare namespace ts {
     enum InferencePriority {
         NakedTypeVariable = 1,
         HomomorphicMappedType = 2,
-        MappedTypeConstraint = 4,
-        ReturnType = 8,
-        LiteralKeyof = 16,
-        NoConstraints = 32,
-        AlwaysStrict = 64,
-        PriorityImpliesCombination = 28
+        PartialHomomorphicMappedType = 4,
+        MappedTypeConstraint = 8,
+        ReturnType = 16,
+        LiteralKeyof = 32,
+        NoConstraints = 64,
+        AlwaysStrict = 128,
+        PriorityImpliesCombination = 56
     }
     /** @deprecated Use FileExtensionInfo instead. */
     type JsFileExtensionInfo = FileExtensionInfo;
@@ -2625,9 +2634,10 @@ declare namespace ts {
         ES2017 = 4,
         ES2018 = 5,
         ES2019 = 6,
-        ESNext = 7,
+        ES2020 = 7,
+        ESNext = 8,
         JSON = 100,
-        Latest = 7
+        Latest = 8
     }
     enum LanguageVariant {
         Standard = 0,
@@ -2760,6 +2770,7 @@ declare namespace ts {
         resolveTypeReferenceDirectives?(typeReferenceDirectiveNames: string[], containingFile: string, redirectedReference?: ResolvedProjectReference): (ResolvedTypeReferenceDirective | undefined)[];
         getEnvironmentVariable?(name: string): string | undefined;
         createHash?(data: string): string;
+        getParsedCommandLine?(fileName: string): ParsedCommandLine | undefined;
     }
     interface SourceMapRange extends TextRange {
         source?: SourceMapSource;
@@ -3631,7 +3642,7 @@ declare namespace ts {
     /**
      * Reads the config file, reports errors if any and exits if the config file cannot be found
      */
-    function getParsedCommandLineOfConfigFile(configFileName: string, optionsToExtend: CompilerOptions, host: ParseConfigFileHost): ParsedCommandLine | undefined;
+    function getParsedCommandLineOfConfigFile(configFileName: string, optionsToExtend: CompilerOptions, host: ParseConfigFileHost, extendedConfigCache?: Map<ExtendedConfigCacheEntry>): ParsedCommandLine | undefined;
     /**
      * Read tsconfig.json file
      * @param fileName The path to the config file
@@ -3665,7 +3676,7 @@ declare namespace ts {
      * @param basePath A root directory to resolve relative path entries in the config
      *    file to. e.g. outDir
      */
-    function parseJsonConfigFileContent(json: any, host: ParseConfigHost, basePath: string, existingOptions?: CompilerOptions, configFileName?: string, resolutionStack?: Path[], extraFileExtensions?: ReadonlyArray<FileExtensionInfo>): ParsedCommandLine;
+    function parseJsonConfigFileContent(json: any, host: ParseConfigHost, basePath: string, existingOptions?: CompilerOptions, configFileName?: string, resolutionStack?: Path[], extraFileExtensions?: ReadonlyArray<FileExtensionInfo>, extendedConfigCache?: Map<ExtendedConfigCacheEntry>): ParsedCommandLine;
     /**
      * Parse the contents of a config file (tsconfig.json).
      * @param jsonNode The contents of the config file to parse
@@ -3673,7 +3684,20 @@ declare namespace ts {
      * @param basePath A root directory to resolve relative path entries in the config
      *    file to. e.g. outDir
      */
-    function parseJsonSourceFileConfigFileContent(sourceFile: TsConfigSourceFile, host: ParseConfigHost, basePath: string, existingOptions?: CompilerOptions, configFileName?: string, resolutionStack?: Path[], extraFileExtensions?: ReadonlyArray<FileExtensionInfo>): ParsedCommandLine;
+    function parseJsonSourceFileConfigFileContent(sourceFile: TsConfigSourceFile, host: ParseConfigHost, basePath: string, existingOptions?: CompilerOptions, configFileName?: string, resolutionStack?: Path[], extraFileExtensions?: ReadonlyArray<FileExtensionInfo>, extendedConfigCache?: Map<ExtendedConfigCacheEntry>): ParsedCommandLine;
+    interface ParsedTsconfig {
+        raw: any;
+        options?: CompilerOptions;
+        typeAcquisition?: TypeAcquisition;
+        /**
+         * Note that the case of the config path has not yet been normalized, as no files have been imported into the project yet
+         */
+        extendedConfigPath?: string;
+    }
+    interface ExtendedConfigCacheEntry {
+        extendedResult: TsConfigSourceFile;
+        extendedConfig: ParsedTsconfig | undefined;
+    }
     function convertCompilerOptionsFromJson(jsonOptions: any, basePath: string, configFileName?: string): {
         options: CompilerOptions;
         errors: Diagnostic[];
@@ -3718,7 +3742,7 @@ declare namespace ts {
         get(directory: string): ResolvedModuleWithFailedLookupLocations | undefined;
         set(directory: string, result: ResolvedModuleWithFailedLookupLocations): void;
     }
-    function createModuleResolutionCache(currentDirectory: string, getCanonicalFileName: (s: string) => string): ModuleResolutionCache;
+    function createModuleResolutionCache(currentDirectory: string, getCanonicalFileName: (s: string) => string, options?: CompilerOptions): ModuleResolutionCache;
     function resolveModuleNameFromCache(moduleName: string, containingFile: string, cache: ModuleResolutionCache): ResolvedModuleWithFailedLookupLocations | undefined;
     function resolveModuleName(moduleName: string, containingFile: string, compilerOptions: CompilerOptions, host: ModuleResolutionHost, cache?: ModuleResolutionCache, redirectedReference?: ResolvedProjectReference): ResolvedModuleWithFailedLookupLocations;
     function nodeModuleNameResolver(moduleName: string, containingFile: string, compilerOptions: CompilerOptions, host: ModuleResolutionHost, cache?: ModuleResolutionCache, redirectedReference?: ResolvedProjectReference): ResolvedModuleWithFailedLookupLocations;
@@ -3841,7 +3865,7 @@ declare namespace ts {
     function updateArrayLiteral(node: ArrayLiteralExpression, elements: ReadonlyArray<Expression>): ArrayLiteralExpression;
     function createObjectLiteral(properties?: ReadonlyArray<ObjectLiteralElementLike>, multiLine?: boolean): ObjectLiteralExpression;
     function updateObjectLiteral(node: ObjectLiteralExpression, properties: ReadonlyArray<ObjectLiteralElementLike>): ObjectLiteralExpression;
-    function createPropertyAccess(expression: Expression, name: string | Identifier | undefined): PropertyAccessExpression;
+    function createPropertyAccess(expression: Expression, name: string | Identifier): PropertyAccessExpression;
     function updatePropertyAccess(node: PropertyAccessExpression, expression: Expression, name: Identifier): PropertyAccessExpression;
     function createElementAccess(expression: Expression, index: number | Expression): ElementAccessExpression;
     function updateElementAccess(node: ElementAccessExpression, expression: Expression, argumentExpression: Expression): ElementAccessExpression;
@@ -4056,7 +4080,7 @@ declare namespace ts {
     function createInputFiles(javascriptText: string, declarationText: string): InputFiles;
     function createInputFiles(readFileText: (path: string) => string | undefined, javascriptPath: string, javascriptMapPath: string | undefined, declarationPath: string, declarationMapPath: string | undefined, buildInfoPath: string | undefined): InputFiles;
     function createInputFiles(javascriptText: string, declarationText: string, javascriptMapPath: string | undefined, javascriptMapText: string | undefined, declarationMapPath: string | undefined, declarationMapText: string | undefined): InputFiles;
-    function updateBundle(node: Bundle, sourceFiles: ReadonlyArray<SourceFile>, prepends?: ReadonlyArray<UnparsedSource>): Bundle;
+    function updateBundle(node: Bundle, sourceFiles: ReadonlyArray<SourceFile>, prepends?: ReadonlyArray<UnparsedSource | InputFiles>): Bundle;
     function createImmediatelyInvokedFunctionExpression(statements: ReadonlyArray<Statement>): CallExpression;
     function createImmediatelyInvokedFunctionExpression(statements: ReadonlyArray<Statement>, param: ParameterDeclaration, paramValue: Expression): CallExpression;
     function createImmediatelyInvokedArrowFunction(statements: ReadonlyArray<Statement>): CallExpression;
@@ -4401,7 +4425,7 @@ declare namespace ts {
      * The builder that can handle the changes in program and iterate through changed file to emit the files
      * The semantic diagnostics are cached per file and managed by clearing for the changed/affected files
      */
-    interface EmitAndSemanticDiagnosticsBuilderProgram extends BuilderProgram {
+    interface EmitAndSemanticDiagnosticsBuilderProgram extends SemanticDiagnosticsBuilderProgram {
         /**
          * Emits the next affected file's emit result (EmitResult and sourceFiles emitted) or returns undefined if iteration is complete
          * The first of writeFile if provided, writeFile of BuilderProgramHost if provided, writeFile of compiler host
@@ -4427,6 +4451,17 @@ declare namespace ts {
     function createAbstractBuilder(rootNames: ReadonlyArray<string> | undefined, options: CompilerOptions | undefined, host?: CompilerHost, oldProgram?: BuilderProgram, configFileParsingDiagnostics?: ReadonlyArray<Diagnostic>, projectReferences?: ReadonlyArray<ProjectReference>): BuilderProgram;
 }
 declare namespace ts {
+    function readBuilderProgram(compilerOptions: CompilerOptions, readFile: (path: string) => string | undefined): EmitAndSemanticDiagnosticsBuilderProgram | undefined;
+    function createIncrementalCompilerHost(options: CompilerOptions, system?: System): CompilerHost;
+    interface IncrementalProgramOptions<T extends BuilderProgram> {
+        rootNames: ReadonlyArray<string>;
+        options: CompilerOptions;
+        configFileParsingDiagnostics?: ReadonlyArray<Diagnostic>;
+        projectReferences?: ReadonlyArray<ProjectReference>;
+        host?: CompilerHost;
+        createProgram?: CreateProgram<T>;
+    }
+    function createIncrementalProgram<T extends BuilderProgram = EmitAndSemanticDiagnosticsBuilderProgram>({ rootNames, options, configFileParsingDiagnostics, projectReferences, host, createProgram }: IncrementalProgramOptions<T>): T;
     type WatchStatusReporter = (diagnostic: Diagnostic, newLine: string, options: CompilerOptions) => void;
     /** Create the program with rootNames and options, if they are undefined, oldProgram and new configFile diagnostics create new program */
     type CreateProgram<T extends BuilderProgram> = (rootNames: ReadonlyArray<string> | undefined, options: CompilerOptions | undefined, host?: CompilerHost, oldProgram?: T, configFileParsingDiagnostics?: ReadonlyArray<Diagnostic>, projectReferences?: ReadonlyArray<ProjectReference> | undefined) => T;
@@ -4540,17 +4575,101 @@ declare namespace ts {
      */
     function createWatchProgram<T extends BuilderProgram>(host: WatchCompilerHostOfConfigFile<T>): WatchOfConfigFile<T>;
 }
+declare namespace ts {
+    interface BuildOptions {
+        dry?: boolean;
+        force?: boolean;
+        verbose?: boolean;
+        incremental?: boolean;
+        traceResolution?: boolean;
+        [option: string]: CompilerOptionsValue | undefined;
+    }
+    type ReportEmitErrorSummary = (errorCount: number) => void;
+    interface SolutionBuilderHostBase<T extends BuilderProgram> extends ProgramHost<T> {
+        createDirectory?(path: string): void;
+        /**
+         * Should provide create directory and writeFile if done of invalidatedProjects is not invoked with
+         * writeFileCallback
+         */
+        writeFile?(path: string, data: string, writeByteOrderMark?: boolean): void;
+        getModifiedTime(fileName: string): Date | undefined;
+        setModifiedTime(fileName: string, date: Date): void;
+        deleteFile(fileName: string): void;
+        getParsedCommandLine?(fileName: string): ParsedCommandLine | undefined;
+        reportDiagnostic: DiagnosticReporter;
+        reportSolutionBuilderStatus: DiagnosticReporter;
+        afterProgramEmitAndDiagnostics?(program: T): void;
+    }
+    interface SolutionBuilderHost<T extends BuilderProgram> extends SolutionBuilderHostBase<T> {
+        reportErrorSummary?: ReportEmitErrorSummary;
+    }
+    interface SolutionBuilderWithWatchHost<T extends BuilderProgram> extends SolutionBuilderHostBase<T>, WatchHost {
+    }
+    interface SolutionBuilder<T extends BuilderProgram> {
+        build(project?: string, cancellationToken?: CancellationToken): ExitStatus;
+        clean(project?: string): ExitStatus;
+        buildReferences(project: string, cancellationToken?: CancellationToken): ExitStatus;
+        cleanReferences(project?: string): ExitStatus;
+        getNextInvalidatedProject(cancellationToken?: CancellationToken): InvalidatedProject<T> | undefined;
+    }
+    /**
+     * Create a function that reports watch status by writing to the system and handles the formating of the diagnostic
+     */
+    function createBuilderStatusReporter(system: System, pretty?: boolean): DiagnosticReporter;
+    function createSolutionBuilderHost<T extends BuilderProgram = EmitAndSemanticDiagnosticsBuilderProgram>(system?: System, createProgram?: CreateProgram<T>, reportDiagnostic?: DiagnosticReporter, reportSolutionBuilderStatus?: DiagnosticReporter, reportErrorSummary?: ReportEmitErrorSummary): SolutionBuilderHost<T>;
+    function createSolutionBuilderWithWatchHost<T extends BuilderProgram = EmitAndSemanticDiagnosticsBuilderProgram>(system?: System, createProgram?: CreateProgram<T>, reportDiagnostic?: DiagnosticReporter, reportSolutionBuilderStatus?: DiagnosticReporter, reportWatchStatus?: WatchStatusReporter): SolutionBuilderWithWatchHost<T>;
+    function createSolutionBuilder<T extends BuilderProgram>(host: SolutionBuilderHost<T>, rootNames: ReadonlyArray<string>, defaultOptions: BuildOptions): SolutionBuilder<T>;
+    function createSolutionBuilderWithWatch<T extends BuilderProgram>(host: SolutionBuilderWithWatchHost<T>, rootNames: ReadonlyArray<string>, defaultOptions: BuildOptions): SolutionBuilder<T>;
+    enum InvalidatedProjectKind {
+        Build = 0,
+        UpdateBundle = 1,
+        UpdateOutputFileStamps = 2
+    }
+    interface InvalidatedProjectBase {
+        readonly kind: InvalidatedProjectKind;
+        readonly project: ResolvedConfigFileName;
+        /**
+         *  To dispose this project and ensure that all the necessary actions are taken and state is updated accordingly
+         */
+        done(cancellationToken?: CancellationToken, writeFile?: WriteFileCallback, customTransformers?: CustomTransformers): ExitStatus;
+        getCompilerOptions(): CompilerOptions;
+        getCurrentDirectory(): string;
+    }
+    interface UpdateOutputFileStampsProject extends InvalidatedProjectBase {
+        readonly kind: InvalidatedProjectKind.UpdateOutputFileStamps;
+        updateOutputFileStatmps(): void;
+    }
+    interface BuildInvalidedProject<T extends BuilderProgram> extends InvalidatedProjectBase {
+        readonly kind: InvalidatedProjectKind.Build;
+        getBuilderProgram(): T | undefined;
+        getProgram(): Program | undefined;
+        getSourceFile(fileName: string): SourceFile | undefined;
+        getSourceFiles(): ReadonlyArray<SourceFile>;
+        getOptionsDiagnostics(cancellationToken?: CancellationToken): ReadonlyArray<Diagnostic>;
+        getGlobalDiagnostics(cancellationToken?: CancellationToken): ReadonlyArray<Diagnostic>;
+        getConfigFileParsingDiagnostics(): ReadonlyArray<Diagnostic>;
+        getSyntacticDiagnostics(sourceFile?: SourceFile, cancellationToken?: CancellationToken): ReadonlyArray<Diagnostic>;
+        getAllDependencies(sourceFile: SourceFile): ReadonlyArray<string>;
+        getSemanticDiagnostics(sourceFile?: SourceFile, cancellationToken?: CancellationToken): ReadonlyArray<Diagnostic>;
+        getSemanticDiagnosticsOfNextAffectedFile(cancellationToken?: CancellationToken, ignoreSourceFile?: (sourceFile: SourceFile) => boolean): AffectedFileResult<ReadonlyArray<Diagnostic>>;
+        emit(targetSourceFile?: SourceFile, writeFile?: WriteFileCallback, cancellationToken?: CancellationToken, emitOnlyDtsFiles?: boolean, customTransformers?: CustomTransformers): EmitResult | undefined;
+    }
+    interface UpdateBundleProject<T extends BuilderProgram> extends InvalidatedProjectBase {
+        readonly kind: InvalidatedProjectKind.UpdateBundle;
+        emit(writeFile?: WriteFileCallback, customTransformers?: CustomTransformers): EmitResult | BuildInvalidedProject<T> | undefined;
+    }
+    type InvalidatedProject<T extends BuilderProgram> = UpdateOutputFileStampsProject | BuildInvalidedProject<T> | UpdateBundleProject<T>;
+}
 declare namespace ts.server {
     type ActionSet = "action::set";
     type ActionInvalidate = "action::invalidate";
     type ActionPackageInstalled = "action::packageInstalled";
-    type ActionValueInspected = "action::valueInspected";
     type EventTypesRegistry = "event::typesRegistry";
     type EventBeginInstallTypes = "event::beginInstallTypes";
     type EventEndInstallTypes = "event::endInstallTypes";
     type EventInitializationFailed = "event::initializationFailed";
     interface TypingInstallerResponse {
-        readonly kind: ActionSet | ActionInvalidate | EventTypesRegistry | ActionPackageInstalled | ActionValueInspected | EventBeginInstallTypes | EventEndInstallTypes | EventInitializationFailed;
+        readonly kind: ActionSet | ActionInvalidate | EventTypesRegistry | ActionPackageInstalled | EventBeginInstallTypes | EventEndInstallTypes | EventInitializationFailed;
     }
     interface TypingInstallerRequestWithProjectName {
         readonly projectName: string;
@@ -4789,6 +4908,7 @@ declare namespace ts {
         getSignatureHelpItems(fileName: string, position: number, options: SignatureHelpItemsOptions | undefined): SignatureHelpItems | undefined;
         getRenameInfo(fileName: string, position: number, options?: RenameInfoOptions): RenameInfo;
         findRenameLocations(fileName: string, position: number, findInStrings: boolean, findInComments: boolean, providePrefixAndSuffixTextForRename?: boolean): ReadonlyArray<RenameLocation> | undefined;
+        getSmartSelectionRange(fileName: string, position: number): SelectionRange;
         getDefinitionAtPosition(fileName: string, position: number): ReadonlyArray<DefinitionInfo> | undefined;
         getDefinitionAndBoundSpan(fileName: string, position: number): DefinitionInfoAndBoundSpan | undefined;
         getTypeDefinitionAtPosition(fileName: string, position: number): ReadonlyArray<DefinitionInfo> | undefined;
@@ -4983,15 +5103,8 @@ declare namespace ts {
         changes: ReadonlyArray<FileTextChanges>;
         commands?: ReadonlyArray<CodeActionCommand>;
     }
-    type CodeActionCommand = InstallPackageAction | GenerateTypesAction;
+    type CodeActionCommand = InstallPackageAction;
     interface InstallPackageAction {
-    }
-    interface GenerateTypesAction extends GenerateTypesOptions {
-    }
-    interface GenerateTypesOptions {
-        readonly file: string;
-        readonly fileToGenerateTypesFor: string;
-        readonly outputFileName: string;
     }
     /**
      * A set of one or more available refactoring actions, grouped under a parent refactoring.
@@ -5056,6 +5169,12 @@ declare namespace ts {
          */
         originalTextSpan?: TextSpan;
         originalFileName?: string;
+        /**
+         * If DocumentSpan.textSpan is the span for name of the declaration,
+         * then this is the span for relevant declaration
+         */
+        contextSpan?: TextSpan;
+        originalContextSpan?: TextSpan;
     }
     interface RenameLocation extends DocumentSpan {
         readonly prefixText?: string;
@@ -5084,6 +5203,7 @@ declare namespace ts {
         fileName?: string;
         isInString?: true;
         textSpan: TextSpan;
+        contextSpan?: TextSpan;
         kind: HighlightSpanKind;
     }
     interface NavigateToItem {
@@ -5239,6 +5359,10 @@ declare namespace ts {
         documentation: SymbolDisplayPart[];
         displayParts: SymbolDisplayPart[];
         isOptional: boolean;
+    }
+    interface SelectionRange {
+        textSpan: TextSpan;
+        parent?: SelectionRange;
     }
     /**
      * Represents a single signature to show in signature help.
@@ -5617,10 +5741,6 @@ declare namespace ts {
     function transpile(input: string, compilerOptions?: CompilerOptions, fileName?: string, diagnostics?: Diagnostic[], moduleName?: string): string;
 }
 declare namespace ts {
-    function generateTypesForModule(name: string, moduleValue: unknown, formatSettings: FormatCodeSettings): string;
-    function generateTypesForGlobal(name: string, globalValue: unknown, formatSettings: FormatCodeSettings): string;
-}
-declare namespace ts {
     /** The version of the language service API */
     const servicesVersion = "0.8";
     function toEditorSettings(options: EditorOptions | EditorSettings): EditorSettings;
@@ -5791,7 +5911,8 @@ declare namespace ts.server.protocol {
         GetEditsForRefactor = "getEditsForRefactor",
         OrganizeImports = "organizeImports",
         GetEditsForFileRename = "getEditsForFileRename",
-        ConfigurePlugin = "configurePlugin"
+        ConfigurePlugin = "configurePlugin",
+        SelectionRange = "selectionRange",
     }
     /**
      * A TypeScript Server message
@@ -6376,15 +6497,21 @@ declare namespace ts.server.protocol {
          */
         file: string;
     }
+    interface TextSpanWithContext extends TextSpan {
+        contextStart?: Location;
+        contextEnd?: Location;
+    }
+    interface FileSpanWithContext extends FileSpan, TextSpanWithContext {
+    }
     interface DefinitionInfoAndBoundSpan {
-        definitions: ReadonlyArray<FileSpan>;
+        definitions: ReadonlyArray<FileSpanWithContext>;
         textSpan: TextSpan;
     }
     /**
      * Definition response message.  Gives text range for definition.
      */
     interface DefinitionResponse extends Response {
-        body?: FileSpan[];
+        body?: FileSpanWithContext[];
     }
     interface DefinitionInfoAndBoundSpanReponse extends Response {
         body?: DefinitionInfoAndBoundSpan;
@@ -6393,13 +6520,13 @@ declare namespace ts.server.protocol {
      * Definition response message.  Gives text range for definition.
      */
     interface TypeDefinitionResponse extends Response {
-        body?: FileSpan[];
+        body?: FileSpanWithContext[];
     }
     /**
      * Implementation response message.  Gives text range for implementations.
      */
     interface ImplementationResponse extends Response {
-        body?: FileSpan[];
+        body?: FileSpanWithContext[];
     }
     /**
      * Request to get brace completion for a location in the file.
@@ -6436,7 +6563,7 @@ declare namespace ts.server.protocol {
         command: CommandTypes.Occurrences;
     }
     /** @deprecated */
-    interface OccurrencesResponseItem extends FileSpan {
+    interface OccurrencesResponseItem extends FileSpanWithContext {
         /**
          * True if the occurrence is a write location, false otherwise.
          */
@@ -6462,7 +6589,7 @@ declare namespace ts.server.protocol {
     /**
      * Span augmented with extra information that denotes the kind of the highlighting to be used for span.
      */
-    interface HighlightSpan extends TextSpan {
+    interface HighlightSpan extends TextSpanWithContext {
         kind: HighlightSpanKind;
     }
     /**
@@ -6492,7 +6619,7 @@ declare namespace ts.server.protocol {
     interface ReferencesRequest extends FileLocationRequest {
         command: CommandTypes.References;
     }
-    interface ReferencesResponseItem extends FileSpan {
+    interface ReferencesResponseItem extends FileSpanWithContext {
         /** Text of line containing the reference.  Including this
          *  with the response avoids latency of editor loading files
          * to show text of reference line (the server already has
@@ -6607,7 +6734,7 @@ declare namespace ts.server.protocol {
         /** The text spans in this group */
         locs: RenameTextSpan[];
     }
-    interface RenameTextSpan extends TextSpan {
+    interface RenameTextSpan extends TextSpanWithContext {
         readonly prefixText?: string;
         readonly suffixText?: string;
     }
@@ -6753,6 +6880,20 @@ declare namespace ts.server.protocol {
         arguments: ConfigurePluginRequestArguments;
     }
     interface ConfigurePluginResponse extends Response {
+    }
+    interface SelectionRangeRequest extends FileRequest {
+        command: CommandTypes.SelectionRange;
+        arguments: SelectionRangeRequestArgs;
+    }
+    interface SelectionRangeRequestArgs extends FileRequestArgs {
+        locations: Location[];
+    }
+    interface SelectionRangeResponse extends Response {
+        body?: SelectionRange[];
+    }
+    interface SelectionRange {
+        textSpan: TextSpan;
+        parent?: SelectionRange;
     }
     /**
      *  Information found in an "open" request.
@@ -8139,6 +8280,9 @@ declare namespace ts.server.protocol {
         ES2015 = "ES2015",
         ES2016 = "ES2016",
         ES2017 = "ES2017",
+        ES2018 = "ES2018",
+        ES2019 = "ES2019",
+        ES2020 = "ES2020",
         ESNext = "ESNext"
     }
 }
@@ -8288,7 +8432,7 @@ declare namespace ts.server {
         private readonly cancellationToken;
         isNonTsProject(): boolean;
         isJsOnlyProject(): boolean;
-        static resolveModule(moduleName: string, initialDir: string, host: ServerHost, log: (message: string) => void): {} | undefined;
+        static resolveModule(moduleName: string, initialDir: string, host: ServerHost, log: (message: string) => void, logErrors?: (message: string) => void): {} | undefined;
         isKnownTypesPackageName(name: string): boolean;
         installPackage(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult>;
         private readonly typingsCache;
@@ -8947,6 +9091,7 @@ declare namespace ts.server {
         private mapDefinitionInfo;
         private static mapToOriginalLocation;
         private toFileSpan;
+        private toFileSpanWithContext;
         private getTypeDefinition;
         private mapImplementationLocations;
         private getImplementation;
@@ -9004,7 +9149,6 @@ declare namespace ts.server {
         private mapLocationNavigationBarItems;
         private getNavigationBarItems;
         private toLocationNavigationTree;
-        private toLocationTextSpan;
         private getNavigationTree;
         private getNavigateToItems;
         private getFullNavigateToItems;
@@ -9027,6 +9171,8 @@ declare namespace ts.server {
         private getBraceMatching;
         private getDiagnosticsForProject;
         private configurePlugin;
+        private getSmartSelectionRange;
+        private mapSelectionRange;
         getCanonicalFileName(fileName: string): string;
         exit(): void;
         private notRequired;
